@@ -39,11 +39,21 @@ class AdaptiveDataset(Dataset):
     def _load_dataset(self):
         """Load the specified dataset."""
         # Base transforms - resize to 96x96, convert to tensor, and normalize
-        base_transform = transforms.Compose([
-            transforms.Resize(96),  # Resize for ViT compatibility
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize to [-1, 1]
-        ])
+        if self.dataset_name == 'mnist':
+            # Grayscale datasets (MNIST) - Convert to RGB for consistency
+            base_transform = transforms.Compose([
+                transforms.Grayscale(num_output_channels=3),  # Convert to 3 channels
+                transforms.Resize(96),
+                transforms.ToTensor(),
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            ])
+        else:
+            # RGB datasets (CIFAR-10, CIFAR-100, STL-10)
+            base_transform = transforms.Compose([
+                transforms.Resize(96),
+                transforms.ToTensor(),
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            ])
         
         if self.dataset_name == 'mnist':
             # Check if MNIST is already downloaded

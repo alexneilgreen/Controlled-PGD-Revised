@@ -1,6 +1,6 @@
 from Attacks.PGD import PGD
 from Attacks.CPGD import CPGD
-from result.reporter import SimpleAccReporter
+from Results.Reporter import SimpleAccReporter
 from torch import device, cuda
 import torch
 

@@ -3,9 +3,11 @@ from torch.linalg import norm
 import torch.nn.functional as F
 
 class CPGD:
-    def __init__(self, iterations, tolerance, num_classes=10):
+    def __init__(self, iterations=100, tolerance=0.000001, epsilon=0.3, alpha=0.01, num_classes=10):
         self.iterations = iterations
         self.tolerance = tolerance
+        self.epsilon = epsilon
+        self.alpha = alpha
         self.num_classes = num_classes
         self.mapping = self._get_mapping()
 

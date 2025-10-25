@@ -61,8 +61,8 @@ class TransformerBlock(nn.Module):
         return x
 
 class VisionTransformer(nn.Module):
-    def __init__(self, img_size=32, patch_size=4, in_channels=3, num_classes=10, 
-                 embed_dim=192, depth=6, n_heads=3, mlp_ratio=4.0, dropout=0.1):
+    def __init__(self, img_size=224, patch_size=16, in_channels=3, num_classes=10, 
+                 embed_dim=768, depth=12, n_heads=12, mlp_ratio=4.0, dropout=0.1):
         super().__init__()
         
         self.patch_embed = PatchEmbedding(img_size, patch_size, in_channels, embed_dim)
@@ -78,7 +78,7 @@ class VisionTransformer(nn.Module):
         ])
         
         self.norm = nn.LayerNorm(embed_dim)
-        self.head_dropout = nn.Dropout(0.3 if embed_dim > 200 else dropout) # Add dropout before final classifier
+        self.head_dropout = nn.Dropout(0.3 if embed_dim > 200 else dropout)
         self.head = nn.Linear(embed_dim, num_classes)
         
         # Initialize weights
@@ -108,5 +108,6 @@ class VisionTransformer(nn.Module):
             x = block(x)
         
         x = self.norm(x)
-        x = self.head(x[:, 0])
+        x = self.head_dropout(x[:, 0])
+        x = self.head(x)
         return x

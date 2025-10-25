@@ -19,19 +19,31 @@ def get_num_classes(dataset_name):
     else:  # mnist, cifar10, stl10
         return 10
 
-def get_model(model_name, num_classes, in_channels=3):
+def get_image_size_for_model(model_name, dataset_name):
+    """Get appropriate image size based on model architecture."""
+    if model_name.lower() == 'vit':
+        return 224  # ViT uses 224x224
+    else:  # ResNet
+        # Use original dataset sizes
+        if dataset_name.lower() in ['mnist', 'cifar10', 'cifar100']:
+            return 32
+        else:  # stl10
+            return 96
+
+def get_model(model_name, num_classes, in_channels=3, img_size=32):
     """Initialize model based on name."""
     if model_name.lower() == 'resnet':
         return ResNet18(num_classes=num_classes, in_channels=in_channels)
     elif model_name.lower() == 'vit':
+        # ViT configuration for 224x224 images
         return VisionTransformer(
-            img_size=96,
-            patch_size=8,
+            img_size=img_size,
+            patch_size=16,  # 224/16 = 14 patches per side
             in_channels=in_channels,
             num_classes=num_classes,
-            embed_dim=384,
-            depth=6,
-            n_heads=6,
+            embed_dim=768,
+            depth=12,
+            n_heads=12,
             mlp_ratio=4.0,
             dropout=0.1
         )
@@ -39,15 +51,19 @@ def get_model(model_name, num_classes, in_channels=3):
         raise ValueError(f"Unknown model: {model_name}")
 
 def train_model(model, train_loader, test_loader, epochs, lr, device, save_path):
-    """Train a model and save it."""
+    """Train a model with mixed precision and save it."""
     print(f"\nTraining model for {epochs} epochs with lr={lr}...")
+    print(f"Using mixed precision training (FP16)...")
     
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    scaler = torch.cuda.amp.GradScaler()  # Mixed precision scaler
     
     model.to(device)
     best_acc = 0.0
+    patience = 10
+    patience_counter = 0
     
     for epoch in range(epochs):
         # Training phase
@@ -60,10 +76,16 @@ def train_model(model, train_loader, test_loader, epochs, lr, device, save_path)
             data, target = data.to(device), target.to(device)
             
             optimizer.zero_grad()
-            output = model(data)
-            loss = criterion(output, target)
-            loss.backward()
-            optimizer.step()
+            
+            # Mixed precision forward pass
+            with torch.cuda.amp.autocast():
+                output = model(data)
+                loss = criterion(output, target)
+            
+            # Mixed precision backward pass
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             
             train_loss += loss.item()
             _, predicted = output.max(1)
@@ -86,8 +108,10 @@ def train_model(model, train_loader, test_loader, epochs, lr, device, save_path)
         with torch.no_grad():
             for data, target in test_loader:
                 data, target = data.to(device), target.to(device)
-                output = model(data)
-                loss = criterion(output, target)
+                
+                with torch.cuda.amp.autocast():
+                    output = model(data)
+                    loss = criterion(output, target)
                 
                 test_loss += loss.item()
                 _, predicted = output.max(1)
@@ -98,9 +122,10 @@ def train_model(model, train_loader, test_loader, epochs, lr, device, save_path)
         print(f'\nEpoch {epoch+1}/{epochs} Summary:')
         print(f'Train Acc: {train_acc:.2f}% | Test Acc: {test_acc:.2f}%\n')
         
-        # Save best model
+        # Save best model and check early stopping
         if test_acc > best_acc:
             best_acc = test_acc
+            patience_counter = 0
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
@@ -108,6 +133,12 @@ def train_model(model, train_loader, test_loader, epochs, lr, device, save_path)
                 'accuracy': test_acc,
             }, save_path)
             print(f'Model saved with accuracy: {test_acc:.2f}%')
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print(f'\nEarly stopping triggered after {epoch+1} epochs')
+                print(f'No improvement for {patience} consecutive epochs')
+                break
     
     print(f'\nTraining completed! Best accuracy: {best_acc:.2f}%')
     return model
@@ -121,9 +152,9 @@ def get_available_models():
     model_files = [f for f in os.listdir(models_dir) if f.endswith('.pth')]
     return model_files
 
-def load_trained_model(model_path, model_name, num_classes, in_channels, device):
+def load_trained_model(model_path, model_name, num_classes, in_channels, device, img_size):
     """Load a trained model from file."""
-    model = get_model(model_name, num_classes, in_channels)
+    model = get_model(model_name, num_classes, in_channels, img_size)
     checkpoint = torch.load(model_path, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.to(device)
@@ -152,10 +183,8 @@ def train_models_mode(args):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
-    # Create Models directory if it doesn't exist
     os.makedirs('./Models', exist_ok=True)
     
-    # Determine which models and datasets to train
     if args.model == 'all':
         models_to_train = ['resnet', 'vit']
     else:
@@ -166,14 +195,12 @@ def train_models_mode(args):
     else:
         datasets_to_train = [args.dataset]
     
-    # Train all combinations
     for model_name in models_to_train:
         for dataset_name in datasets_to_train:
             print(f"\n{'='*60}")
             print(f"Training {model_name.upper()} on {dataset_name.upper()}")
             print(f"{'='*60}")
             
-            # Check if model already exists
             save_name = f"{model_name}_{dataset_name}.pth"
             save_path = os.path.join('./Models', save_name)
             
@@ -182,29 +209,32 @@ def train_models_mode(args):
                 print("Use --retrain flag to retrain existing models.")
                 continue
             
-            # Get number of classes and input channels
             num_classes = get_num_classes(dataset_name)
-            in_channels = 1 if dataset_name.lower() == 'mnist' else 3
+            in_channels = 3  # All datasets are 3 channels
+            img_size = get_image_size_for_model(model_name, dataset_name)
             
-            # Get dataloaders
+            print(f"Image size for {model_name}: {img_size}x{img_size}")
+            
             train_loader = get_dataloader(
                 dataset_name=dataset_name,
                 split='train',
                 batch_size=args.batch_size,
-                shuffle=True
+                shuffle=True,
+                num_workers=args.num_workers,
+                target_size=img_size
             )
             
             test_loader = get_dataloader(
                 dataset_name=dataset_name,
                 split='test',
                 batch_size=args.batch_size,
-                shuffle=False
+                shuffle=False,
+                num_workers=args.num_workers,
+                target_size=img_size
             )
             
-            # Initialize model
-            model = get_model(model_name, num_classes, in_channels)
+            model = get_model(model_name, num_classes, in_channels, img_size)
             
-            # Train model
             train_model(
                 model=model,
                 train_loader=train_loader,
@@ -220,7 +250,6 @@ def attack_models_mode(args):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
-    # Get available models
     available_models = get_available_models()
     
     if not available_models:
@@ -231,7 +260,6 @@ def attack_models_mode(args):
     for idx, model_file in enumerate(available_models):
         print(f"{idx+1}. {model_file}")
     
-    # Select model
     while True:
         try:
             selection = int(input("\nSelect model number: ")) - 1
@@ -243,31 +271,29 @@ def attack_models_mode(args):
         except ValueError:
             print("Invalid input. Please enter a number.")
     
-    # Parse model information from filename
     model_parts = selected_model_file.replace('.pth', '').split('_')
     model_name = model_parts[0]
     dataset_name = model_parts[1]
     
     print(f"\nSelected: {model_name.upper()} trained on {dataset_name.upper()}")
     
-    # Get dataset info
     num_classes = get_num_classes(dataset_name)
-    in_channels = 1 if dataset_name.lower() == 'mnist' else 3
+    in_channels = 3
+    img_size = get_image_size_for_model(model_name, dataset_name)
     
-    # Load model
     model_path = os.path.join('./Models', selected_model_file)
-    model = load_trained_model(model_path, model_name, num_classes, in_channels, device)
+    model = load_trained_model(model_path, model_name, num_classes, in_channels, device, img_size)
     print("Model loaded successfully!")
     
-    # Get test dataloader
     test_loader = get_dataloader(
         dataset_name=dataset_name,
         split='test',
         batch_size=args.batch_size,
-        shuffle=False
+        shuffle=False,
+        num_workers=args.num_workers,
+        target_size=img_size
     )
     
-    # Select attack type
     print("\nSelect attack type:")
     print("1. PGD (Untargeted)")
     print("2. CPGD (Targeted)")
@@ -282,32 +308,37 @@ def attack_models_mode(args):
         except ValueError:
             print("Invalid input. Please enter a number.")
     
-    # Setup loss function
     loss_fn = nn.CrossEntropyLoss()
     
+    # Create Results directory
+    os.makedirs('./Results', exist_ok=True)
+    
     if attack_choice == 1:
-        # PGD Attack
         print("\nExecuting PGD (Untargeted) Attack...")
+        save_path = f"./Results/{model_name}_{dataset_name}_pgd.txt"
         attack = UntargetedAttack(
             model=model,
             loss=loss_fn,
             dataloader=test_loader,
+            save_path=save_path,
             iterations=args.iterations,
             tolerance=args.tolerance,
             lr=args.attack_lr
         )
         attack.execute_attack()
     else:
-        # CPGD Attack
         print("\nExecuting CPGD (Targeted) Attack...")
         mapping = get_class_mapping(num_classes)
-        print(f"\nClass Mapping Saved")
+        print(f"\nClass Mapping: {mapping}")
         
+        save_path = f"./Results/{model_name}_{dataset_name}_cpgd.txt"
         attack = TargetedAttack(
             model=model,
             loss=loss_fn,
             dataloader=test_loader,
             num_classes=num_classes,
+            mapping=mapping,
+            save_path=save_path,
             iterations=args.iterations,
             tolerance=args.tolerance,
             lr=args.attack_lr
@@ -324,9 +355,10 @@ def main():
                        help='Model architecture to train')
     parser.add_argument('--dataset', type=str, choices=['mnist', 'cifar10', 'cifar100', 'stl10', 'all'], 
                        default='all', help='Dataset to use')
-    parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
+    parser.add_argument('--epochs', type=int, default=10, help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate for training')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
+    parser.add_argument('--num_workers', type=int, default=4, help='Number of dataloader workers')
     parser.add_argument('--retrain', action='store_true', help='Retrain existing models')
     
     # Attack arguments

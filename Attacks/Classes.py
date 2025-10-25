@@ -7,7 +7,7 @@ import torch
 dev = device("cuda" if cuda.is_available() else "cpu")
 
 class UntargetedAttack:
-    def __init__(self, model, loss, dataloader, **kwargs):
+    def __init__(self, model, loss, dataloader, save_path=None, **kwargs):
         self.model = model
         self.loss = loss
         self.dataloader = dataloader
@@ -23,7 +23,7 @@ class UntargetedAttack:
 
         self.pgd = PGD(iterations=iterations, tolerance=tolerance, 
                       epsilon=epsilon, alpha=alpha)
-        self.reporter = SimpleAccReporter()
+        self.reporter = SimpleAccReporter(save_path=save_path)
 
     def execute_attack(self):
         print("\nExecuting PGD Attack...")

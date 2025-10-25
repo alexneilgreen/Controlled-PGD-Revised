@@ -1,9 +1,20 @@
 from torch import no_grad
 from torch.linalg import norm
 class PGD:
-    def __init__(self, iterations, tolerance):
+    def __init__(self, iterations=100, tolerance=0.000001, epsilon=0.3, alpha=0.01):
+        """
+        Initialize PGD attack.
+        
+        Args:
+            iterations: Maximum number of iterations
+            tolerance: Convergence tolerance
+            epsilon: Maximum perturbation (L-infinity norm)
+            alpha: Step size for each iteration
+        """
         self.iterations = iterations
         self.tolerance = tolerance
+        self.epsilon = epsilon
+        self.alpha = alpha
 
     def __call__(self, x, y, lr, model, loss):
         return self.pgd(x, y, lr, model, loss)

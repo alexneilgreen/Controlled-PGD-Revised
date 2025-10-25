@@ -1,4 +1,6 @@
 import torch
+import os
+from datetime import datetime
 
 class SimpleAccReporter:
     """
@@ -10,11 +12,12 @@ class SimpleAccReporter:
     - Accuracy: Classification accuracy (1 - GASR)
     """
     
-    def __init__(self):
+    def __init__(self, save_path=None):
         self.total_misclassified = 0
         self.total_samples = 0
         self.class_misclassified = {}
         self.class_total = {}
+        self.save_path = save_path
     
     def collect(self, data):
         """
@@ -47,7 +50,9 @@ class SimpleAccReporter:
                     self.class_misclassified[true_label] += 1
     
     def report(self):
-        """Print the attack statistics."""
+        """
+        Print the attack statistics.
+        """
         print("\n" + "="*60)
         print("ATTACK RESULTS")
         print("="*60)

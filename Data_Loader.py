@@ -18,7 +18,8 @@ class AdaptiveDataset(Dataset):
                  dataset_name: str, 
                  split: str = 'train',
                  root: str = './Data',
-                 transform: Optional[transforms.Compose] = None):
+                 transform: Optional[transforms.Compose] = None,
+                 target_size: int = None):
         """
         Initialize the adaptive dataset.
         
@@ -27,36 +28,46 @@ class AdaptiveDataset(Dataset):
             split: Dataset split ('train', 'test', 'val')
             root: Root directory for datasets
             transform: Additional transforms to apply
+            target_size: Target image size (32 for ResNet, 224 for ViT)
         """
         self.dataset_name = dataset_name.lower()
         self.split = split
         self.root = root
         self.transform = transform
+        self.target_size = target_size
         
         # Load the appropriate dataset
         self.dataset = self._load_dataset()
     
     def _load_dataset(self):
         """Load the specified dataset."""
-        # Base transforms - resize to 96x96, convert to tensor, and normalize
+        # Determine target size - use original sizes if not specified
+        if self.target_size is None:
+            if self.dataset_name in ['mnist', 'cifar10', 'cifar100']:
+                size = 32
+            else:  # stl10
+                size = 96
+        else:
+            size = self.target_size
+        
+        # Base transforms
         if self.dataset_name == 'mnist':
-            # Grayscale datasets (MNIST) - Convert to RGB for consistency
+            # MNIST: Convert grayscale to RGB
             base_transform = transforms.Compose([
-                transforms.Grayscale(num_output_channels=3),  # Convert to 3 channels
-                transforms.Resize(96),
+                transforms.Grayscale(num_output_channels=3),
+                transforms.Resize(size),
                 transforms.ToTensor(),
                 transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
             ])
         else:
-            # RGB datasets (CIFAR-10, CIFAR-100, STL-10)
+            # RGB datasets
             base_transform = transforms.Compose([
-                transforms.Resize(96),
+                transforms.Resize(size),
                 transforms.ToTensor(),
                 transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
             ])
         
         if self.dataset_name == 'mnist':
-            # Check if MNIST is already downloaded
             mnist_path = os.path.join(self.root, 'MNIST')
             download_needed = not os.path.exists(mnist_path)
             
@@ -64,13 +75,12 @@ class AdaptiveDataset(Dataset):
                 return torchvision.datasets.MNIST(
                     root=self.root, train=True, download=download_needed, transform=base_transform
                 )
-            else:  # test
+            else:
                 return torchvision.datasets.MNIST(
                     root=self.root, train=False, download=download_needed, transform=base_transform
                 )
         
         elif self.dataset_name == 'cifar10':
-            # Check if CIFAR-10 is already downloaded
             cifar10_path = os.path.join(self.root, 'cifar-10-batches-py')
             download_needed = not os.path.exists(cifar10_path)
             
@@ -78,13 +88,12 @@ class AdaptiveDataset(Dataset):
                 return torchvision.datasets.CIFAR10(
                     root=self.root, train=True, download=download_needed, transform=base_transform
                 )
-            else:  # test
+            else:
                 return torchvision.datasets.CIFAR10(
                     root=self.root, train=False, download=download_needed, transform=base_transform
                 )
         
         elif self.dataset_name == 'cifar100':
-            # Check if CIFAR-100 is already downloaded
             cifar100_path = os.path.join(self.root, 'cifar-100-python')
             download_needed = not os.path.exists(cifar100_path)
             
@@ -92,17 +101,15 @@ class AdaptiveDataset(Dataset):
                 return torchvision.datasets.CIFAR100(
                     root=self.root, train=True, download=download_needed, transform=base_transform
                 )
-            else:  # test
+            else:
                 return torchvision.datasets.CIFAR100(
                     root=self.root, train=False, download=download_needed, transform=base_transform
                 )
         
         elif self.dataset_name == 'stl10':
-            # Check if STL-10 is already downloaded
             stl10_path = os.path.join(self.root, 'stl10_binary')
             download_needed = not os.path.exists(stl10_path)
             
-            # STL-10 has train/test/unlabeled splits
             split_map = {'train': 'train', 'test': 'test', 'val': 'test'}
             return torchvision.datasets.STL10(
                 root=self.root, split=split_map[self.split], download=download_needed, transform=base_transform
@@ -121,15 +128,11 @@ class AdaptiveDataset(Dataset):
         Returns:
             tuple: (image, label) - clean image and its label
         """
-        # Get original image and label
         if hasattr(self.dataset, 'data'):
-            # For datasets like CIFAR that have .data attribute
             image, label = self.dataset[idx]
         else:
-            # For other datasets
             image, label = self.dataset[idx]
         
-        # Apply additional transforms if specified
         if self.transform:
             image = self.transform(image)
         
@@ -141,7 +144,8 @@ def get_dataloader(dataset_name: str,
                   batch_size: int = 32,
                   shuffle: bool = True,
                   root: str = './Data',
-                  num_workers: int = 4) -> DataLoader:
+                  num_workers: int = 4,
+                  target_size: int = None) -> DataLoader:
     """
     Create a DataLoader for the specified dataset.
     
@@ -152,6 +156,7 @@ def get_dataloader(dataset_name: str,
         shuffle: Whether to shuffle data
         root: Root directory for datasets
         num_workers: Number of worker processes
+        target_size: Target image size (None for original, 32, 224, etc.)
     
     Returns:
         DataLoader object
@@ -159,7 +164,8 @@ def get_dataloader(dataset_name: str,
     dataset = AdaptiveDataset(
         dataset_name=dataset_name,
         split=split,
-        root=root
+        root=root,
+        target_size=target_size
     )
     
     return DataLoader(
@@ -186,7 +192,6 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # Handle 'all' option
     if args.dataset == 'all':
         datasets_to_test = get_available_datasets()
     else:
@@ -196,20 +201,18 @@ if __name__ == "__main__":
         print(f"\nTesting data loader with {dataset_name} dataset...")
         
         try:
-            # Create dataloader
             dataloader = get_dataloader(
                 dataset_name=dataset_name,
                 split='train',
                 batch_size=args.batch_size
             )
             
-            # Test a few batches
             for i, (images, labels) in enumerate(dataloader):
                 print(f"\tBatch {i+1}:")
                 print(f"\t\tImages shape: {images.shape}")
                 print(f"\t\tLabels shape: {labels.shape}")
                 
-                if i >= 1:  # Just test 2 batches per dataset
+                if i >= 1:
                     break
             
             print(f"\t✅ {dataset_name} loaded successfully")

@@ -1,0 +1,6 @@
+# Data and Models folders - ignore contents but keep the folders
+Data/*
+!Data/.gitkeep
+
+Models/*
+!Models/.gitkeep
